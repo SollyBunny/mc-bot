@@ -1,0 +1,9 @@
+compressed.index.js
+package-lock.json
+conf.json
+node_modules
+node_modules/*
+data/harvest/*.out
+data/harvest/data/*
+./temp/*
+bun.lockb

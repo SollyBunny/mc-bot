@@ -1,0 +1,17 @@
+{
+	"main": {
+		"token": "<token>",
+		"prefix": "!",
+		"admins": ["<your id here>"],
+		"activity": "I'm a bot",
+		"error": "<channel>"
+	},
+	"system": {
+		"color": [128, 128, 128],
+		"helptext": "Hi I'm $name :wave:\n\n  • `$prefixhelp <page>` to list cmds :thinking:\n  • Use `$prefixhelp <cmdname>` for usage :sweat:\n  • You can find my sauce [here](https://github.com/sollybunny/mc-bot) :spaghetti:"
+	},
+	"mc": {
+		"screenname": "mc",
+		"channelid": "123"
+	}
+}
