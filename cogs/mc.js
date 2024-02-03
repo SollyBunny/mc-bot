@@ -42,11 +42,18 @@ function screenWrite(input) {
 	return true;
 }
 function screenRead(data) {
-	let match = /^\[.+\] \[Server thread\/INFO\] \[minecraft\/MinecraftServer\]: <(.+?)> (.+)$/;
+	if (data.length > 256) return; // Ignore any init data
+	let match = data.match(/\<(.+?)\> (.+)\n*/);
 	if (!match) return;
 	const name = match[1];
 	const msg = match[2];
 	console.log(`${name}: "${msg}"`);
+	client._webhookreply.bind({
+		channel: await client.channels.fetch(conf.mc.channelid),
+	})({
+		nickname: user,
+		rawAvatarURL: getAvatar(user)
+	}, msg);
 }
 screenStart();
 
