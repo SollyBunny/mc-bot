@@ -1,7 +1,7 @@
 
 const os = require("os");
 const pty = require("node-pty");
-const { spawn } = require("child_process");
+const { spawn, exec } = require("child_process");
 
 const UUIDs = {};
 const avatars = {};
@@ -36,24 +36,47 @@ function screenStart() {
 	return true;
 }
 function screenWrite(input) {
-	if (!screen)
-		return false
-    screenProcess.stdin.write(input);
+	if (!screen) return false;
+    screenProcess.stdin.write(input + "\n");
 	return true;
 }
-function screenRead(data) {
+function screenSay(user, msg) {
+	if (!screen) return false;
+	msg = [
+		{"text": "<"},
+		{"text": user, "color": "blue"},
+		{"text": `> ${msg}`}
+	];
+	screenWrite(`/tellraw @a ${JSON.stringify(msg)}`);
+}
+async function screenRead(data) {
 	if (data.length > 256) return; // Ignore any init data
-	let match = data.match(/\<(.+?)\> (.+)\n*/);
-	if (!match) return;
-	const name = match[1];
-	const msg = match[2];
-	console.log(`${name}: "${msg}"`);
-	client._webhookreply.bind({
-		channel: await client.channels.fetch(conf.mc.channelid),
-	})({
-		nickname: user,
-		rawAvatarURL: getAvatar(user)
-	}, msg);
+	let match;
+	match = data.match(/MinecraftServer\]\: \<(.+?)\> (.+)\n*/);
+	if (match) {
+		const name = match[1];
+		const msg = match[2];
+		client._webhookreply.bind({
+			channel: await client.channels.fetch(conf.mc.channelid),
+		})({
+			nickname: user,
+			rawAvatarURL: getAvatar(user)
+		}, msg);
+		return;
+	}
+	if (data.indexOf("DedicatedServer]: Starting minecraft server") !== -1) {
+		(await client.channels.fetch(conf.mc.channelid)).send("Server starting");
+		return;
+	}
+	if (data.indexOf("DedicatedServer]: Done") !== -1)  {
+		(await client.channels.fetch(conf.mc.channelid)).send("Server ready");
+		return;
+	}
+	if (data.indexOf("MinecraftServer]: Stopping server") !== -1) {
+		(await client.channels.fetch(conf.mc.channelid)).send("Stopped server");
+		return;
+	}
+
 }
 screenStart();
 
@@ -66,31 +89,59 @@ module.exports.conf = {
 	}
 };
 
+let restartVotes = [];
 module.exports.cmds = {
 	"restart": {
 		desc: "Restart the server",
 		func: async function (args) {
-			
+			if (!screen) this.errorreply("Server not on");
+			if (!this.author.isAdmin) {
+				if (restartVotes.indexOf(this.author.id) !== -1) {
+					this.errorreply("You already voted for a restart");
+					return;
+				}
+				restartVotes.push(this.author.id);
+				if (restartVotes.length < 2) {
+					this.embedreply({
+						title: "Restart vote",
+						msg: `${restartVotes.length} / 2 votes`,
+						color: conf.system.color
+					});
+					return;
+				}
+			}
+			screenWrite("stop");
 		}
 	},
 	"uptime": {
 		desc: "Get uptime of the server",
-		func: async function(args) {
-			let t = process.uptime();
-			if (t >= 604800) // weeks / days
-				t = `${Math.floor(t / 604800)} weeks, ${Math.floor((t % 604800) / 86400)} days`;
-			else if (t >= 86400) // days / hours
-				t = `${Math.floor(t / 86400)} days, ${Math.floor((t % 86400) / 3600)} hours`;
-			else if (t >= 3600) // hours / minutes
-				t = `${Math.floor(t / 3600)} hours, ${Math.floor((t % 3600) / 60)} minutes`;
-			else if (t >= 60) // minutes / seconds
-				t = `${Math.floor(t / 60)} minutes, ${Math.floor(t % 60)} seconds`;
-			else // seconds
-				t = `${Math.floor(t)} seconds`;
-			this.embedreply({
-				title: "Uptime",
-				msg: t,
-				color: conf.system.color
+		func: async function (args) {
+			exec("screen -ls", (error, stdout, stderr) => {
+				if (error) { this.errorreply(`Failed to get uptime: ${error}`); return; }
+				if (stderr) { this.errorreply(`Failed to get uptime: ${stderr}`); return; }
+				const match = stdout.match(new RegExp(`(\\d+)\\.${conf.mc.screenname}(?!.*Dead)`));
+				if (!match) { this.errorreply(`Failed to get uptime: cannot find screen ${conf.mc.screenname}`); return; }
+				const pid = match[1];
+				exec(`ps -o etimes= -p ${pid}`, (error, stdout, stderr) => {
+					if (error) { this.errorreply(`Failed to get uptime: ${error}`); return; }
+					if (stderr) { this.errorreply(`Failed to get uptime: ${stderr}`); return; }
+					let t = parseInt(stdout);
+					if (t >= 604800) // weeks / days
+						t = `${Math.floor(t / 604800)} weeks, ${Math.floor((t % 604800) / 86400)} days`;
+					else if (t >= 86400) // days / hours
+						t = `${Math.floor(t / 86400)} days, ${Math.floor((t % 86400) / 3600)} hours`;
+					else if (t >= 3600) // hours / minutes
+						t = `${Math.floor(t / 3600)} hours, ${Math.floor((t % 3600) / 60)} minutes`;
+					else if (t >= 60) // minutes / seconds
+						t = `${Math.floor(t / 60)} minutes, ${Math.floor(t % 60)} seconds`;
+					else // seconds
+						t = `${Math.floor(t)} seconds`;
+					this.embedreply({
+						title: "Uptime",
+						msg: t,
+						color: conf.system.color
+					});
+				});
 			});
 		}
 	},
@@ -100,7 +151,22 @@ module.exports.cmds = {
 			[dc.BIGTEXT, "message", "Message to send", true, undefined, 100]
 		],
 		func: async function (args) {
-			
+			screenSay(args.author.tag, args[0]);
 		}
 	}
 };
+
+module.exports.hooks = [
+	{
+		event: "messageCreate",
+		priority: 10,
+		func: async function() {
+			if (this.author.isNotPerson) return;
+			if (this.content.length > 100) {
+				this.reply("Message too long");
+				return;
+			};
+			screenSay(this.author.tag, this.content);
+		}
+	}
+]
