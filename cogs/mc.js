@@ -37,7 +37,7 @@ function screenStart() {
 }
 function screenWrite(input) {
 	if (!screen) return false;
-    screenProcess.stdin.write(input + "\n");
+    screen.write("\n" + input + "\n");
 	return true;
 }
 function screenSay(user, msg) {
@@ -62,6 +62,24 @@ async function screenRead(data) {
 			nickname: user,
 			rawAvatarURL: getAvatar(user)
 		}, msg);
+		return;
+	}
+	match = data.match(/MinecraftServer\]\: (.+?) joined the/);
+	if (match) {
+		const name = match[1];
+		(await client.channels.fetch(conf.mc.channelid)).send(`${name} joined the game`);
+		return;
+	}
+	match = data.match(/MinecraftServer\]\: (.+?) left the/);
+	if (match) {
+		const name = match[1];
+		(await client.channels.fetch(conf.mc.channelid)).send(`${name} left the game`);
+		return;
+	}
+	match = data.match(/\/MinecraftServer\]\: (There (are|is) \d+ (of a max of \d+ )*players online: .+)/);
+	if (match) {
+		const msg = match[1];
+		(await client.channels.fetch(conf.mc.channelid)).send(msg);
 		return;
 	}
 	if (data.indexOf("DedicatedServer]: Starting minecraft server") !== -1) {
@@ -153,7 +171,23 @@ module.exports.cmds = {
 		func: async function (args) {
 			screenSay(args.author.tag, args[0]);
 		}
-	}
+	},
+	"list": {
+		desc: "List players in server",
+		func: async function() {
+			screenWrite("list");
+		}
+	},
+	"cmd": {
+		desc: "Run a command in the server console",
+		admin: true,
+		args: [
+			[dc.BIGTEXT, "message", "Message to send", true, undefined, 100]
+		],
+		func: async function (args) {
+			screenWrite(args[0]);
+		}
+	},
 };
 
 module.exports.hooks = [
@@ -162,6 +196,7 @@ module.exports.hooks = [
 		priority: 10,
 		func: async function() {
 			if (this.author.isNotPerson) return;
+			if (this.channel.id !== conf.mc.channelid) return;
 			if (this.content.length > 100) {
 				this.reply("Message too long");
 				return;
