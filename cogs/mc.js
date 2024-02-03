@@ -1,6 +1,20 @@
 
 const os = require("os");
 const pty = require("node-pty");
+const { spawn } = require("child_process");
+
+const UUIDs = {};
+const avatars = {};
+async function getUUID(name) {
+	if (UUIDs[name])
+		return UUIDs[name];
+	const data = await fetch(`https://api.mojang.com/users/profiles/minecraft/${name}`);
+	const json = await data.json();
+	return UUIDs[name] = json.id;
+}
+async function getAvatar(name) {
+	return `https://crafatar.com/avatars/${await getUUID(name)}?overlay=true`;
+}
 
 let screen;
 function screenStart() {
@@ -28,7 +42,11 @@ function screenWrite(input) {
 	return true;
 }
 function screenRead(data) {
-	console.log(`data: "${data}"`);
+	let match = /^\[.+\] \[Server thread\/INFO\] \[minecraft\/MinecraftServer\]: <(.+?)> (.+)$/;
+	if (!match) return;
+	const name = match[1];
+	const msg = match[2];
+	console.log(`${name}: "${msg}"`);
 }
 screenStart();
 
@@ -45,7 +63,7 @@ module.exports.cmds = {
 	"restart": {
 		desc: "Restart the server",
 		func: async function (args) {
-			process.exit(0);
+			
 		}
 	},
 	"uptime": {
