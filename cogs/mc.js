@@ -86,7 +86,7 @@ async function screenRead(data) {
 		} else {
 			batchMsg = { name, msg };
 		}
-		batchmsg.timeout = setTimeout(screenBatchMsgCallback, 1000);
+		batchMsg.timeout = setTimeout(screenBatchMsgCallback, 1000);
 		return;
 	}
 	match = data.match(/MinecraftServer\]\: (.+?) joined the/);
