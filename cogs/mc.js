@@ -59,8 +59,8 @@ async function screenRead(data) {
 		client._webhookreply.bind({
 			channel: await client.channels.fetch(conf.mc.channelid),
 		})({
-			nickname: user,
-			rawAvatarURL: getAvatar(user)
+			nickname: name,
+			rawAvatarURL: getAvatar(name)
 		}, msg);
 		return;
 	}
