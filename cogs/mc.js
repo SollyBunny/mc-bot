@@ -60,7 +60,7 @@ async function screenRead(data) {
 			channel: await client.channels.fetch(conf.mc.channelid),
 		})({
 			nickname: name,
-			rawAvatarURL: getAvatar(name)
+			rawAvatarURL: await getAvatar(name)
 		}, msg);
 		return;
 	}
