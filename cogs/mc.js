@@ -49,7 +49,7 @@ function screenSay(user, msg) {
 	];
 	screenWrite(`/tellraw @a ${JSON.stringify(msg)}`);
 }
-const batchMsg = undefined;
+let batchMsg = undefined;
 async function screenBatchMsgCallback(forceBatchMsg) {
 	let msg;
 	if (forceBatchMsg) {
