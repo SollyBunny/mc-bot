@@ -60,7 +60,7 @@ async function screenBatchMsgCallback(forceBatchMsg) {
 	} else {
 		return;
 	}
-	cancelTimeout(msg.timeout);
+	clearTimeout(msg.timeout);
 	client._webhookreply.bind({
 		channel: await client.channels.fetch(conf.mc.channelid),
 	})({
@@ -76,7 +76,7 @@ async function screenRead(data) {
 		const name = match[1];
 		const msg = match[2];
 		if (batchMsg) { // There is currently a waiting msg
-			batchMsg.timeout = cancelTimeout(batchMsg.timeout);
+			batchMsg.timeout = clearTimeout(batchMsg.timeout);
 			if (batchMsg.name === name) { // Add to it
 				batchMsg.msg += "\n" + msg;
 			} else { // Flush batch
