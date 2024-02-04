@@ -49,6 +49,25 @@ function screenSay(user, msg) {
 	];
 	screenWrite(`/tellraw @a ${JSON.stringify(msg)}`);
 }
+const batchMsg = undefined;
+async function screenBatchMsgCallback(forceBatchMsg) {
+	let msg;
+	if (forceBatchMsg) {
+		msg = forceBatchMsg;
+	} else if (batchMsg) {
+		msg = batchMsg;
+		batchMsg = undefined;
+	} else {
+		return;
+	}
+	cancelTimeout(msg.timeout);
+	client._webhookreply.bind({
+		channel: await client.channels.fetch(conf.mc.channelid),
+	})({
+		nickname: msg.name,
+		rawAvatarURL: await getAvatar(msg.name)
+	}, msg.msg);
+}
 async function screenRead(data) {
 	if (data.length > 256) return; // Ignore any init data
 	let match;
@@ -56,12 +75,18 @@ async function screenRead(data) {
 	if (match) {
 		const name = match[1];
 		const msg = match[2];
-		client._webhookreply.bind({
-			channel: await client.channels.fetch(conf.mc.channelid),
-		})({
-			nickname: name,
-			rawAvatarURL: await getAvatar(name)
-		}, msg);
+		if (batchMsg) { // There is currently a waiting msg
+			batchMsg.timeout = cancelTimeout(batchMsg.timeout);
+			if (batchMsg.name === name) { // Add to it
+				batchMsg.msg += "\n" + msg;
+			} else { // Flush batch
+				screenBatchMsgCallback(batchMsg);
+				batchMsg = undefined;
+			}
+		} else {
+			batchMsg = { name, msg };
+		}
+		batchmsg.timeout = setTimeout(screenBatchMsgCallback, 1000);
 		return;
 	}
 	match = data.match(/MinecraftServer\]\: (.+?) joined the/);
