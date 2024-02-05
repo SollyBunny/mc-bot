@@ -76,7 +76,8 @@ async function screenRead(data) {
 		const name = match[1];
 		const msg = match[2];
 		if (batchMsg) { // There is currently a waiting msg
-			batchMsg.timeout = clearTimeout(batchMsg.timeout);
+			clearTimeout(batchMsg.timeout);
+			batchMsg.timeout = undefined;
 			if (batchMsg.name === name) { // Add to it
 				batchMsg.msg += "\n" + msg;
 			} else { // Flush batch
@@ -86,7 +87,7 @@ async function screenRead(data) {
 		} else {
 			batchMsg = { name, msg };
 		}
-		batchMsg.timeout = setTimeout(screenBatchMsgCallback, 1000);
+		batchMsg.timeout = setTimeout(screenBatchMsgCallback, 10_000);
 		return;
 	}
 	match = data.match(/MinecraftServer\]\: (.+?) joined the/);
