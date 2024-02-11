@@ -206,16 +206,12 @@ global.fs   = require("fs");
 				perms = this
 			} else {
 				let channel;
-				if (this instanceof dc.BaseInteraction || this instanceof dc.Message) {
+				if (this.channel) {
 					channel = this.channel;
-				} else if (this instanceof dc.BaseChannel) {
+				} else if (this.permissions || this.permissionsFor) {
 					channel = this;
-				} else if (this instanceof dc.BaseGuild) {
-					if (this.permissions) {
-						channel = this;
-					} else {
-						channel = this.channels._cache.first();
-					}
+				} else if (this.channels) {
+					channel = this.channels._cache.first();
 				}
 				if (!channel) return false;
 				if (channel.permissions) {
@@ -284,7 +280,7 @@ global.fs   = require("fs");
 		};
 		client._webhookreply = async function(user, msg, allowedMentions) {
 			const name = user.nickname || user.user.username || "Unknown";
-			if (!this.hasperm(dc.Permissions.ManageWebhooks)) {
+			if (!client._hasperm.apply(this, [dc.Permissions.ManageWebhooks])) {
 				this.channel.send(`${name}: ${msg}`);
 				return;
 			};
