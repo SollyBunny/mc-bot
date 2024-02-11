@@ -18,6 +18,7 @@ global.fs   = require("fs");
 	dc.CHANNEL = 8;
 	dc.SERVER  = 9;
 	dc.typename = ["Text", "Text+", "Integer", "Number", "User", "Role", "Boolean", "Choice", "Channel", "Server"];
+	dc.Permissions = dc.PermissionFlagsBits;
 }
 { // Log
 	global.log = (m) => {
@@ -50,6 +51,17 @@ global.fs   = require("fs");
 { // Util
 
 	global.util = {};
+
+	// Hash a string
+	util.hash = s => {
+		let hash = 0;
+		if (s.length === 0) return hash;
+		for (let i = 0; i < s.length; i++) {
+			hash = ((hash << 5) - hash) + s.charCodeAt(i);
+			hash |= 0;
+		}
+		return Math.abs(hash);
+	};
 
 	// Get the levenhtein distance between two strings
 	util.levdis = (a, b) => {
@@ -152,6 +164,18 @@ global.fs   = require("fs");
 		});
 	};
 }
+{ // Temp directory
+	fs.lstat("./temp/", (error, temp) => {
+		if (error) {
+			fs.mkdir("./temp/", error => {
+				if (error)
+					log.error(`Cannot create temp directory: ${error}`);
+			});
+		} else if (temp && !temp.isDirectory()) {
+			log.error("Cannot create temp directory: file exists")
+		}
+	});
+}
 { // Config
 	function confload() {
 		global.conf = JSON.parse(fs.readFileSync("./conf.json"));
@@ -176,15 +200,39 @@ global.fs   = require("fs");
 	});
 
 	{ // Embed Replying
+		client._hasperm = function(perm) {
+			let perms;
+			if (this instanceof dc.PermissionsBitField) {
+				perms = this
+			} else {
+				let channel;
+				if (this instanceof dc.BaseInteraction || this instanceof dc.Message) {
+					channel = this.channel;
+				} else if (this instanceof dc.BaseChannel) {
+					channel = this;
+				} else if (this instanceof dc.BaseGuild) {
+					if (this.permissions) {
+						channel = this;
+					} else {
+						channel = this.channels._cache.first();
+					}
+				}
+				if (!channel) return false;
+				if (channel.permissions) {
+					perms = channel.permissions;
+				} else {
+					perms = channel.permissionsFor(client.application.id);
+				}
+			}
+			if (!perms) return false;
+			return perms.has(perm);
+		}
 		client._embedreply = async function({
-			msg    = "",
-			title  = undefined,
-			color  = undefined,
-			colorraw = undefined,
-			fields = undefined,
-			thumb  = undefined,
-			image  = undefined,
-			url    = undefined
+			msg = "",
+			title, url,
+			color, colorraw,
+			fields,
+			thumb, image
 		}) {
 			let embed = {
 				description: msg,
@@ -196,13 +244,9 @@ global.fs   = require("fs");
 				url        : url
 			};
 			try {
-				this.reply ({ embeds: [embed] });
+				this.reply({ embeds: [embed] });
 			} catch (e) { // if msg is deleted
-				try {
-					this.channel.send({ embeds: [embed] });
-				} catch (e) {
-					this.send({ embeds: [embed] });	
-				}
+				this.send({ embeds: [embed] });	
 			}
 		};
 		client._errorreply = async function(msg) {
@@ -212,34 +256,72 @@ global.fs   = require("fs");
 				color: conf.main.errcolor,
 			});
 		};
-		client._webhookreply = async function(user, msg) {
-			if (user.nickname === undefined) {
-				this.channel.send(msg); // TODO find some way to alert the user of the inability of webhooks in DMs
-				return;
-			}
-			let webhook = await this.channel.createWebhook({
-				name: user.nickname || user.user.username,
-				channel: this.channel,
-				avatar: user.rawAvatarURL || user.avatarURL() || user.user.avatarURL()
+		client._webhookcache = new Map();
+		client._webhookclear = async function() {
+			let deleted = 0;
+			await client.guilds._cache.forEach(async function(guild) {
+				if (!client._hasperm.apply(guild, [dc.Permissions.ManageWebhooks])) return;
+				let webhooks;
+				try {
+					webhooks = await guild.fetchWebhooks();
+				} catch (e) {
+					log.warn(`Couldn't fetch webhooks for guild ${guild.name} (${guild.id}); ${e}`);
+					return;
+				}
+				webhooks.forEach(async function(webhook) {
+					if (webhook.owner.id !== client.application.id) return;
+					const name = webhook.name;
+					if (
+						!client._webhookcache.has(name) ||
+						performance.now() - client._webhookcache.get(name)._lastused > 10 * 60 * 1000
+					) {
+						webhook.delete("Webhook abandoned or unused for longer than 10 minutes");
+						deleted += 1;
+					}
+				});
 			});
+			return deleted;
+		};
+		client._webhookreply = async function(user, msg, allowedMentions) {
+			const name = user.nickname || user.user.username || "Unknown";
+			if (!this.hasperm(dc.Permissions.ManageWebhooks)) {
+				this.channel.send(`${name}: ${msg}`);
+				return;
+			};
+			const avatar = user.rawAvatarURL || user.avatarURL() || user.user.avatarURL();
+			const id = `${this.channel.id}${util.hash(name)}${util.hash(avatar)}`;
+			let webhook;
+			if (client._webhookcache.has(id)) {
+				webhook = client._webhookcache.get(id);
+			} else {
+				webhook = await this.channel.createWebhook({
+					name: id,
+					avatar: avatar,
+					channel: this.channel,
+				});
+				client._webhookcache.set(id, webhook);
+			}
+			webhook._lastused = performance.now();
 			await webhook.send({
 				content: msg,
-				username: user.nickname || user.user.username,
-				allowedMentions: {
+				username: name,
+				avatar: avatar,
+				allowedMentions: allowedMentions ? {
+					"parse": allowedMentions
+				} : {
 					"users" : [],
 					"roles" : [],
 					"channels" : []
 				}
 			});
-			await webhook.delete();
 		};
 	}
 	{ // Hooks
 		client.hooks = {};
-		client.hooks.ID = 0;
+		client.hooks.GID = 0;
 		client.hooks.add = hook => { // TODO error checking
-			hook.ID = client.hooks.ID;
-			client.hooks.ID += 1;
+			hook.ID = client.hooks.GID;
+			client.hooks.GID += 1;
 			hook.priority = hook.priority || 0;
 			hook.func.priority = hook.priority;
 			if (client.hooks[hook.event] === undefined) { // init event hook
@@ -367,6 +449,9 @@ global.fs   = require("fs");
 			}
 			if (cog.cmds)
 				Object.keys(cog.cmds).forEach(i => {
+					if (client.cmds[i]) {
+						log.warn(`Overriding command ${i}`);
+					}
 					client.cmds[i] = cog.cmds[i];
 				});
 			if (cog.hooks) cog.hooks.forEach(client.hooks.add);
@@ -400,6 +485,12 @@ global.fs   = require("fs");
 fs.readdirSync("./cogs/").forEach(client.cogs.load);
 client.cmds._serialized = client.cmds.serialize();
 
+client._dotick = async function() {
+	await Promise.all(Object.values(client.cogs).map(cog => {
+		if (cog.tick) return cog.tick();
+	}))
+};
+
 client.hooks.add({event: "ready", func: async function() {
 	if (conf.main.activity)
 		client.user.setPresence({
@@ -407,6 +498,9 @@ client.hooks.add({event: "ready", func: async function() {
 		});
 	log(`Ready as ${client.user.tag}`);
 	client.cmds.push(client.cmds._serialized);
+	setInterval(client._webhookclear, 60 * 10 * 1000);
+	setInterval(client._dotick, 60 * 10 * 1000);
+	client._webhookclear;
 }});
 
 async function setupmsg() {
@@ -420,6 +514,7 @@ async function setupmsg() {
 	this.embedreply   = client._embedreply;
 	this.webhookreply = client._webhookreply;
 	this.errorreply   = client._errorreply;
+	this.hasperm      = client._hasperm;
 }
 client.hooks.add({event: "messageCreate",     priority: Infinity, func: setupmsg});
 client.hooks.add({event: "interactionCreate", priority: Infinity, func: setupmsg});
@@ -520,7 +615,7 @@ client.hooks.add({event: "messageCreate", func: async function() {
 		for (let i = 0; i < cmd.args.length; ++i) {
 			if (this.content[i] === undefined) {
 				if (cmd.args[i][3]) { // if required
-					this.errorreply(`\`${cmd.args[i][1]}\` This field is required`);
+					this.errorreply(`Field \`${cmd.args[i][1]}\` is required`);
 					return;
 				}
 				continue;
@@ -557,7 +652,7 @@ client.hooks.add({event: "messageCreate", func: async function() {
 						}
 					}
 					if (!user) {
-						this.errorreply(`\`${cmd.args[i][1]}\`: Invalid user`);
+						this.errorreply(`\`${cmd.args[i][1]}\` is not a valid user`);
 						return;
 					}
 					this.content[i] = user;
@@ -566,16 +661,15 @@ client.hooks.add({event: "messageCreate", func: async function() {
 					this.content[i] = this.content.slice(i).join(" ");
 				case dc.TEXT:
 					this.content[i] = this.content[i].replace(/\\ /g, " ");
-
 					if (
 						(cmd.args[i][4] && cmd.args[i][4] > this.content[i].length) ||
 						(cmd.args[i][5] && cmd.args[i][5] < this.content[i].length)
 					) {
 						if (cmd.args[i][4]) {
-							if (cmd.args[i][5]) this.errorreply(`\`${cmd.args[i][1]}\`: Length must be between ${cmd.args[i][4]} and ${cmd.args[i][5]}`);
-							else                this.errorreply(`\`${cmd.args[i][1]}\`: Length must be above ${cmd.args[i][5]})`);
+							if (cmd.args[i][5]) this.errorreply(`\`${cmd.args[i][1]}\` must be between ${cmd.args[i][4]} and ${cmd.args[i][5]} characters`);
+							else                this.errorreply(`\`${cmd.args[i][1]}\` must be longer than ${cmd.args[i][5]} characters`);
 						} else {
-							this.errorreply(`\`${cmd.args[i][1]}\`: Length must be below ${cmd.args[i][5]})`);
+							this.errorreply(`\`${cmd.args[i][1]}\` must be shorter than ${cmd.args[i][5]} characters`);
 						}
 						return;
 					}
@@ -585,41 +679,39 @@ client.hooks.add({event: "messageCreate", func: async function() {
 					if (cmd.args[i][4].indexOf(this.content[i]) === -1) {
 						this.content[i] = util.levdisclosest(cmd.args[i][4], msg.content[i], 3);
 						if (this.content[i] === undefined) { // nothing near to it
-							this.errorreply(`\`${cmd.args[i][1]}\`: Invalid choice, options are:\n\`` + cmd.args[i][4].join("\`, \`") + "\`"); // "
+							this.errorreply(`Invalid option for \`${cmd.args[i][1]}\`, options are:\n\`` + cmd.args[i][4].join("\`, \`") + "\`"); // "
 							return;
 						}
 					}
 					break;
 				case dc.INT:
-					try {
-						this.content[i] = Math.round(this.content[i]);
-					} catch (e) {
-						this.errorreply(`\`${cmd.args[i][1]}\`: Invalid Integer`);
-						return;
-					}
-					if (cmd.args[i][4]) {
-						if (cmd.args[i][5]) this.errorreply(`\`${cmd.args[i][1]}\`: Must be between ${cmd.args[i][4]} and ${cmd.args[i][5]}`);
-						else                this.errorreply(`\`${cmd.args[i][1]}\`: Must be above ${cmd.args[i][5]})`);
-					} else {
-						this.errorreply(`\`${cmd.args[i][1]}\`: Must be below ${cmd.args[i][5]})`);
-					}
-					return;
-					break;
-				case dc.NUM:
-					this.content[i] = Number(msg.content[i]);
+					this.content[i] = Number(this.content[i]);
 					if (isNaN(this.content[i])) {
-						this.errorreply(`Invalid Number for \`${cmd.args[i][1]}\``);
+						this.errorreply(`Invalid Integer for \`${cmd.args[i][1]}\``);
 						return;
+					}
+					if (this.content[i] % 1 !== 0) {
+						this.errorreply(`\`${cmd.args[i][1]}\` must be a whole number`);
+						return;
+					}
+					// no break
+				case dc.NUM:
+					if (cmd.args[i][0] === dc.NUM) {
+						this.content[i] = Number(msg.content[i]);
+						if (isNaN(this.content[i])) {
+							this.errorreply(`Invalid Number for \`${cmd.args[i][1]}\``);
+							return;
+						}
 					}
 					if (
 						(cmd.args[i][4] && cmd.args[i][4] > this.content[i]) ||
 						(cmd.args[i][5] && cmd.args[i][5] < this.content[i])
 					) {
 						if (cmd.args[i][4]) {
-							if (cmd.args[i][5]) this.errorreply(`Invalid Number (must be imbetween ${cmd.args[i][4]} and ${cmd.args[i][5]}) for \`${cmd.args[i][1]}\``);
-							else                this.errorreply(`Invalid Number (must be above ${cmd.args[i][4]}) for \`${cmd.args[i][1]}\``);
+							if (cmd.args[i][5]) this.errorreply(`\`${cmd.args[i][1]}\` must be between ${cmd.args[i][4]} and ${cmd.args[i][5]}`);
+							else                this.errorreply(`\`${cmd.args[i][1]}\` must be larger than ${cmd.args[i][5]}`);
 						} else {
-							this.errorreply(`Invalid Number (must be below ${cmd.args[i][5]}) for \`${cmd.args[i][1]}\``);
+							this.errorreply(`\`${cmd.args[i][1]}\` must be smaller than ${cmd.args[i][5]}`);
 						}
 						return;
 					}
